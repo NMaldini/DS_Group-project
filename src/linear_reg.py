@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn import metrics
-import statsmodels.api as sm
+from sklearn import preprocessing
 
 from src.constants import *
 
@@ -11,39 +11,13 @@ test_set = pd.read_csv(TEST_DATA_LOCATION)
 
 selected_predictors = [
     'recharge_value',
-    # 'voice_revenue',
-    # 'data_revenue',
     'data_mb',
-    # 'rc_slab_30',
-    # 'time_since_last_recharge',
     'voice_balance',
-    # 'data_balance',
-    # 'network_stay',
-    # 'mtc_idd_min',
-    # 'moc_same_network_min',
-    # 'mtc_same_network_min',
-    # 'moc_idd_min',
-    # 'total_moc_count',
-    # 'mtc_other_networks'
-    'mtc_major',
-    'rc_slab_100',
-    # 'total_og_min',
-    'moc_other_networks',
-    'last_rec_denom',
-    'moc_major',
-    # 'rc_slab_50',
-    'day_mou_min'
-    # rc_slab_59
-    # language
-    # night_mou_min
-    # time_since_last_data_use
-    # rc_slab_119
-    # time_since_last_call
-    # time_since_last_activity
-    # smart_ph_flag
-    # rc_slab_99
-    # rc_slab_49
-    # dual_sim_flag
+    'data_balance',
+    'moc_same_network_min',
+    'day_mou_min',
+    'time_since_last_recharge',
+
 ]
 X_train = train_set[selected_predictors]
 y_train = train_set['revenue_rs']
@@ -56,23 +30,49 @@ def sklearn_model(_train, y_train, X_test, y_test):
     regressor.fit(X_train, y_train)
     y_pred = regressor.predict(X_test)
     df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
-    df1 = df.head(25)
-    print(df1)
+    coeff_df = pd.DataFrame(regressor.coef_, selected_predictors, columns=['Coefficient'])
+    print(coeff_df)
+    print("intercept                   ", regressor.intercept_)
     print('Mean Absolute Error:', metrics.mean_absolute_error(y_test, y_pred))
     print('Mean Squared Error:', metrics.mean_squared_error(y_test, y_pred))
     print('Root Mean Squared Error:', np.sqrt(metrics.mean_squared_error(y_test, y_pred)))
-    coeff_df = pd.DataFrame(regressor.coef_, selected_predictors, columns=['Coefficient'])
+    print("Total actual revenue :  ", sum(df['Actual']))
+    print("Total revenue :  ", sum(df['Predicted']))
+    return regressor, sum(df['Predicted'])
 
 
-def stats_model_regressor(X_train, y_train, X_test, y_test):
-    model = sm.OLS(y_train, X_train).fit()
-    y_pred = model.predict(X_test)  # make the predictions by the model
+def predict(model, X_test, y_test):
+    regressor = model
+    y_pred = regressor.predict(X_test)
     df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
-    df1 = df.head(25)
-    print(df1)
-    # Print out the statistics
-    print(model.summary())
+    coeff_df = pd.DataFrame(regressor.coef_, selected_predictors, columns=['Coefficient'])
+    print("Total revenue after promotions :  ", sum(df['Predicted']))
+    return sum(df['Predicted'])
 
 
+model, r_1 = sklearn_model(X_train, y_train, X_test, y_test)
 
-stats_model_regressor(X_train, y_train, X_test, y_test)
+# Promotions
+data = pd.DataFrame(test_set[['data_mb', 'moc_same_network_min']])
+x = data.values  # returns a numpy array
+min_max_scaler = preprocessing.MinMaxScaler()
+x_scaled = min_max_scaler.fit_transform(x)
+scaled_data = pd.DataFrame(x_scaled)
+scaled_data.columns = ['data_mb', 'moc_same_network_min']
+prop = 0.02
+
+test_set['data_mb_scaled'] = scaled_data['data_mb']
+test_set['moc_same_network_min_scaled'] = scaled_data['moc_same_network_min']
+test_set['data_mb'] = np.where(test_set['data_mb_scaled'] >= prop, test_set['data_mb'] + 1000, test_set['data_mb'])
+test_set['moc_same_network_min'] = np.where(test_set['moc_same_network_min_scaled'] >= prop,
+                                            test_set['moc_same_network_min'] + 65, test_set['moc_same_network_min'])
+test_set['recharge_value'] = np.where(test_set['moc_same_network_min_scaled'] >= prop,
+                                      test_set['recharge_value'] + 50, test_set['recharge_value'])
+test_set['recharge_value'] = np.where(test_set['data_mb_scaled'] >= prop,
+                                      test_set['recharge_value'] + 49, test_set['recharge_value'])
+
+X_test = test_set[selected_predictors]
+r_2 = predict(model, X_test, y_test)
+print("Revenue uplift : ", r_2 - r_1)
+print("count of customers who got data offers : ", len(test_set[(test_set['data_mb_scaled'] >= prop)]))
+print("count of customers who got voice offers : ", len(test_set[(test_set['moc_same_network_min_scaled'] >= prop)]))
